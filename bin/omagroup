@@ -15,6 +15,8 @@
 #   omagroup scroll ID +col|-col
 #   omagroup resize ID +0.1|-0.1
 #   omagroup move ID MONITOR|--cursor  show the group on another monitor
+#   omagroup frame ID TOP RIGHT BOTTOM LEFT  set the panel insets
+#   omagroup focus ID ADDR          focus a member and center its column
 #   omagroup menu                   open the frame menu of the shown group
 #   omagroup geometry               frame geometry for the shell (JSON)
 
@@ -29,12 +31,17 @@ RULES_DIR="${OMAGROUP_RULES_DIR:-$STATE_HOME/omarchy/workspace-layouts}"
 CLOSE_WAIT="${OMAGROUP_CLOSE_WAIT:-3}"
 PREFIX="special:omagroup-"
 
-# Frame geometry. Frame.qml reads it with `omagroup geometry`: the panel
-# starts MARGIN from the work area, the header takes HEADER on top, and PAD
-# separates the panel edge from the members on the other sides.
-MARGIN=32
+# Frame geometry. Frame.qml reads it with `omagroup geometry`. Each group's
+# insets place its panel in the work area (INSET by default); inside the
+# panel the header takes HEADER on top, the tab sidebar SIDEBAR on the left
+# and PAD the other sides.
+INSET=32
 PAD=8
 HEADER=40
+SIDEBAR=200
+# From this inner width, columns take a third of it; below, the full width.
+# An odd count keeps whole neighbours around a centered column.
+WIDE=1800
 
 die() {
   echo "omagroup: $*" >&2
@@ -71,9 +78,40 @@ rule_file() { echo "$RULES_DIR/omagroup-$1.lua"; }
 # and the group would stop looking like one window.
 SOLID_RULE="hl.window_rule({ name = \"omagroup-solid\", match = { workspace = \"n[s:$PREFIX]\" }, opaque = true, force_rgbx = true })"
 
+# rule_lua ID TOP RIGHT BOTTOM LEFT (insets)
 rule_lua() {
   printf 'hl.workspace_rule({ workspace = "%s%s", layout = "scrolling", gaps_out = { top = %d, right = %d, bottom = %d, left = %d } })' \
-    "$PREFIX" "$1" $((MARGIN + HEADER)) $((MARGIN + PAD)) $((MARGIN + PAD)) $((MARGIN + PAD))
+    "$PREFIX" "$1" $(($2 + HEADER)) $(($3 + PAD)) $(($4 + PAD)) $(($5 + SIDEBAR))
+}
+
+apply_rule() {
+  mkdir -p "$RULES_DIR"
+  rule_lua "$@" >"$(rule_file "$1")"
+  hyprctl eval "$(rule_lua "$@")" >/dev/null
+}
+
+# "TOP RIGHT BOTTOM LEFT" of a group.
+group_insets() {
+  read_state | jq -r --arg id "$1" --argjson d "$INSET" \
+    '.groups[] | select(.id == $id) | (.insets // {}) | "\(.top // $d) \(.right // $d) \(.bottom // $d) \(.left // $d)"'
+}
+
+float_cmd() { echo "hl.dsp.window.float({ window = \"address:$1\", action = \"$2\" })"; }
+
+# Columns take a third or all of the inner width of the monitor that shows
+# the group. Does nothing for a hidden group.
+fit_columns() {
+  local id=$1 monitor
+  monitor=$(shown_on "$id")
+  [[ -n $monitor ]] || return 0
+  local top right bottom left
+  read -r top right bottom left < <(group_insets "$id")
+  local inner
+  inner=$(hyprctl monitors -j | jq -r --arg m "$monitor" --argjson side $((left + SIDEBAR + right + PAD)) \
+    '.[] | select(.name == $m) | (.width / .scale) - .reserved[0] - .reserved[2] - $side | floor')
+  local width=1.0
+  ((inner >= WIDE)) && width=0.333
+  on_group_monitor "$id" "hl.dsp.layout(\"colresize all $width\")"
 }
 
 # One hyprctl call for a list of Lua dispatches.
@@ -169,19 +207,26 @@ cmd_create() {
   # state comes last: a prune that runs during the moves cannot see the group.
   mkdir -p "$RULES_DIR"
   echo "$SOLID_RULE" >"$RULES_DIR/omagroup.lua"
-  rule_lua "$id" >"$(rule_file "$id")"
   hyprctl eval "$SOLID_RULE" >/dev/null
-  hyprctl eval "$(rule_lua "$id")" >/dev/null
+  apply_rule "$id" "$INSET" "$INSET" "$INSET" "$INSET"
 
+  # Desktop mode floats every window, and a floating window ignores the
+  # group layout: tile the members and remember which ones floated.
+  local floated
+  floated=$(hyprctl clients -j | jq -c --argjson a "$(printf '%s\n' "${addresses[@]}" | jq -R . | jq -s .)" \
+    '[.[] | select(.floating and (.address as $x | $a | index($x))) | .address]')
   local moves=()
   for address in "${addresses[@]}"; do
     moves+=("$(move_cmd "$PREFIX$id" "$address")")
+    jq -e --arg x "$address" 'index($x)' <<<"$floated" >/dev/null && moves+=("$(float_cmd "$address" disable)")
   done
   dispatch_all "${moves[@]}"
 
-  read_state | jq --arg id "$id" --arg name "$name" '.groups += [{ id: $id, name: $name }]' | write_state
+  read_state | jq --arg id "$id" --arg name "$name" --argjson floated "$floated" --argjson d "$INSET" \
+    '.groups += [{ id: $id, name: $name, insets: { top: $d, right: $d, bottom: $d, left: $d }, floated: $floated }]' | write_state
 
   [[ $(focused_group) == "$id" ]] || toggle "$id"
+  fit_columns "$id"
   echo "$id"
 }
 
@@ -279,9 +324,13 @@ cmd_ungroup() {
   [[ $workspace =~ ^-?[0-9]+$ ]] || die "no active workspace"
 
   hide_if_shown "$id"
+  local floated
+  floated=$(read_state | jq -c --arg id "$id" '.groups[] | select(.id == $id) | .floated // []')
   local moves=() address
   while read -r address; do
-    [[ -n $address ]] && moves+=("$(move_cmd "$workspace" "$address")")
+    [[ -n $address ]] || continue
+    moves+=("$(move_cmd "$workspace" "$address")")
+    jq -e --arg x "$address" 'index($x)' <<<"$floated" >/dev/null && moves+=("$(float_cmd "$address" enable)")
   done < <(members "$id")
   dispatch_all "${moves[@]}"
   delete_group "$id"
@@ -372,7 +421,29 @@ cmd_move() {
 }
 
 cmd_geometry() {
-  printf '{"margin":%d,"pad":%d,"header":%d}\n' "$MARGIN" "$PAD" "$HEADER"
+  printf '{"inset":%d,"pad":%d,"header":%d,"sidebar":%d}\n' "$INSET" "$PAD" "$HEADER" "$SIDEBAR"
+}
+
+cmd_frame() {
+  (($# == 5)) || die "usage: omagroup frame ID TOP RIGHT BOTTOM LEFT"
+  need_id "$1"
+  local id=$1 value
+  shift
+  for value in "$@"; do
+    [[ $value =~ ^[0-9]{1,5}$ ]] || die "insets are whole pixels: $value"
+  done
+  read_state | jq --arg id "$id" --argjson t "$1" --argjson r "$2" --argjson b "$3" --argjson l "$4" \
+    '.groups |= map(if .id == $id then .insets = { top: $t, right: $r, bottom: $b, left: $l } else . end)' | write_state
+  apply_rule "$id" "$@"
+  fit_columns "$id"
+}
+
+cmd_focus() {
+  (($# == 2)) || die "usage: omagroup focus ID ADDR"
+  need_id "$1"
+  valid_address "$2" || die "invalid window address: $2"
+  members "$1" | grep -qxF "$2" || die "$2 is not in group $1"
+  on_group_monitor "$1" "hl.dsp.focus({ window = \"address:$2\" })" 'hl.dsp.layout("center")'
 }
 
 cmd_menu() {
@@ -390,7 +461,7 @@ main() {
   local command=${1:-pick}
   (($#)) && shift
   case $command in
-    pick | create | list | windows | show | hide | ungroup | close | prune | scroll | resize | move | menu | geometry) "cmd_$command" "$@" ;;
+    pick | create | list | windows | show | hide | ungroup | close | prune | scroll | resize | move | frame | focus | menu | geometry) "cmd_$command" "$@" ;;
     -h | --help | help) awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0" ;;
     *) die "unknown command: $command (see omagroup --help)" ;;
   esac

@@ -24,7 +24,7 @@ teardown() { rm -rf "$T"; }
 # clients '[{"address":"0xa","workspace":"3"}...]' with short fields
 clients() {
   jq '[.[] | {
-    address, class: (.class // "foot"), title: (.title // "t"), pid: (.pid // 0), monitor: (.monitor // 1), mapped: true,
+    address, class: (.class // "foot"), title: (.title // "t"), pid: (.pid // 0), monitor: (.monitor // 1), mapped: true, floating: (.floating // false),
     workspace: { id: (if (.workspace | test("^[0-9]+$")) then (.workspace | tonumber) else -98 end), name: .workspace }
   }]' <<<"$1" >"$FAKE_CLIENTS"
 }
@@ -32,8 +32,8 @@ clients() {
 # monitors "<special on focused DP-1>" ["<special on HDMI-A-1>"] [<active workspace id of DP-1>]
 monitors() {
   jq -n --arg special "$1" --arg other "${2:-}" --argjson active "${3:-3}" '[
-    { id: 1, name: "DP-1", focused: true, x: 0, y: 0, width: 3440, height: 1440, scale: 1.25, activeWorkspace: { id: $active, name: ($active | tostring) }, specialWorkspace: { id: 0, name: $special } },
-    { id: 0, name: "HDMI-A-1", focused: false, x: 2752, y: 0, width: 2560, height: 1440, scale: 1.25, activeWorkspace: { id: 11, name: "11" }, specialWorkspace: { id: 0, name: $other } }
+    { id: 1, name: "DP-1", focused: true, x: 0, y: 0, width: 3440, height: 1440, scale: 1.25, reserved: [0, 30, 0, 0], activeWorkspace: { id: $active, name: ($active | tostring) }, specialWorkspace: { id: 0, name: $special } },
+    { id: 0, name: "HDMI-A-1", focused: false, x: 2752, y: 0, width: 2560, height: 1440, scale: 1.25, reserved: [0, 30, 0, 0], activeWorkspace: { id: 11, name: "11" }, specialWorkspace: { id: 0, name: $other } }
   ]' >"$FAKE_MONITORS"
 }
 
@@ -84,7 +84,7 @@ test_create_moves_windows_and_shows_group() {
   assert_contains "$(cat "$FAKE_LOG")" 'eval hl.workspace_rule({ workspace = "special:omagroup-og1", layout = "scrolling"'
   assert_contains "$(cat "$T/rules/omagroup-og1.lua")" 'layout = "scrolling"'
   assert_contains "$(cat "$T/rules/omagroup.lua")" 'force_rgbx = true'
-  assert_eq "$(jq -c . "$T/state/groups.json")" '{"groups":[{"id":"og1","name":"dev"}]}'
+  assert_eq "$(jq -c '.groups[0] | {id, name}' "$T/state/groups.json")" '{"id":"og1","name":"dev"}'
 }
 
 test_create_takes_next_free_id_and_default_name() {
@@ -242,8 +242,59 @@ test_windows_labels_locations() {
 test_rule_gaps_follow_geometry() {
   clients '[{"address":"0xa","workspace":"3"}]'
   "$CLI" create 0xa >/dev/null
-  assert_eq "$("$CLI" geometry)" '{"margin":32,"pad":8,"header":40}'
-  assert_contains "$(cat "$T/rules/omagroup-og1.lua")" 'gaps_out = { top = 72, right = 40, bottom = 40, left = 40 }'
+  assert_eq "$("$CLI" geometry)" '{"inset":32,"pad":8,"header":40,"sidebar":200}'
+  assert_contains "$(cat "$T/rules/omagroup-og1.lua")" 'gaps_out = { top = 72, right = 40, bottom = 40, left = 232 }'
+}
+
+test_frame_sets_insets_and_gaps() {
+  clients '[{"address":"0xa","workspace":"3"}]'
+  "$CLI" create 0xa >/dev/null
+  : >"$FAKE_LOG"
+  "$CLI" frame og1 10 20 30 40
+  assert_eq "$(jq -c '.groups[0].insets' "$T/state/groups.json")" '{"top":10,"right":20,"bottom":30,"left":40}'
+  assert_contains "$(cat "$T/rules/omagroup-og1.lua")" 'gaps_out = { top = 50, right = 28, bottom = 38, left = 240 }'
+  assert_contains "$(cat "$FAKE_LOG")" 'eval hl.workspace_rule({ workspace = "special:omagroup-og1", layout = "scrolling", gaps_out = { top = 50'
+  "$CLI" frame og1 10 20 30 '-1' 2>/dev/null
+  assert_eq "$?" 1
+  "$CLI" frame og1 10 20 30 2>/dev/null
+  assert_eq "$?" 1
+}
+
+test_columns_are_thirds_on_a_wide_monitor_and_full_on_a_narrow_one() {
+  clients '[{"address":"0xa","workspace":"3"}]'
+  monitors special:omagroup-og1
+  "$CLI" create 0xa >/dev/null
+  assert_contains "$(dispatches)" 'hl.dsp.layout("colresize all 0.333")'
+  : >"$FAKE_LOG"
+  "$CLI" frame og1 32 800 32 32
+  assert_contains "$(dispatches)" 'hl.dsp.layout("colresize all 1.0")'
+}
+
+test_create_tiles_floating_windows_and_ungroup_floats_them_again() {
+  clients '[{"address":"0xa","workspace":"3","floating":true},{"address":"0xb","workspace":"3"}]'
+  "$CLI" create 0xa 0xb >/dev/null
+  local d
+  d=$(dispatches)
+  assert_contains "$d" 'hl.dsp.window.float({ window = "address:0xa", action = "disable" })'
+  assert_not_contains "$d" 'address:0xb", action'
+  clients '[{"address":"0xa","workspace":"special:omagroup-og1"},{"address":"0xb","workspace":"special:omagroup-og1"}]'
+  : >"$FAKE_LOG"
+  "$CLI" ungroup og1
+  d=$(dispatches)
+  assert_contains "$d" 'hl.dsp.window.float({ window = "address:0xa", action = "enable" })'
+  assert_not_contains "$d" 'address:0xb", action'
+}
+
+test_focus_centers_a_member_and_rejects_others() {
+  clients '[{"address":"0xa","workspace":"3"},{"address":"0xc","workspace":"5"}]'
+  "$CLI" create 0xa >/dev/null
+  clients '[{"address":"0xa","workspace":"special:omagroup-og1"},{"address":"0xc","workspace":"5"}]'
+  monitors special:omagroup-og1
+  : >"$FAKE_LOG"
+  "$CLI" focus og1 0xa
+  assert_eq "$(dispatches)" $'hl.dsp.focus({ window = "address:0xa" })\nhl.dsp.layout("center")'
+  "$CLI" focus og1 0xc 2>/dev/null
+  assert_eq "$?" 1
 }
 
 test_move_shows_the_group_on_the_monitor_under_the_cursor() {
