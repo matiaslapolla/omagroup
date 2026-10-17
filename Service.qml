@@ -124,9 +124,19 @@ Item {
     }
   }
 
+  Gallery {
+    id: gallery
+    service: root
+    onConfirmed: function(addresses, name) {
+      root.run(name ? ["create", "--name", name].concat(addresses) : ["create"].concat(addresses))
+    }
+  }
+
   IpcHandler {
     target: "omagroup"
 
+    function pick(): void { gallery.open() }
+    function cancel(): void { gallery.close() }
     function shown(): string { return JSON.stringify(root.shown) }
   }
 }
