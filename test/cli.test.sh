@@ -83,6 +83,7 @@ test_create_moves_windows_and_shows_group() {
   assert_contains "$d" 'hl.dsp.workspace.toggle_special("omagroup-og1")'
   assert_contains "$(cat "$FAKE_LOG")" 'eval hl.workspace_rule({ workspace = "special:omagroup-og1", layout = "scrolling"'
   assert_contains "$(cat "$T/rules/omagroup-og1.lua")" 'layout = "scrolling"'
+  assert_contains "$(cat "$T/rules/omagroup.lua")" 'force_rgbx = true'
   assert_eq "$(jq -c . "$T/state/groups.json")" '{"groups":[{"id":"og1","name":"dev"}]}'
 }
 

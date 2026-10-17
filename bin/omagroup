@@ -61,6 +61,10 @@ group_name() { read_state | jq -r --arg id "$1" '.groups[] | select(.id == $id) 
 
 rule_file() { echo "$RULES_DIR/omagroup-$1.lua"; }
 
+# Members draw opaque: a translucent terminal would show the workspace below
+# and the group would stop looking like one window.
+SOLID_RULE='hl.window_rule({ name = "omagroup-solid", match = { workspace = "n[s:special:omagroup-]" }, opaque = true, force_rgbx = true })'
+
 rule_lua() {
   printf 'hl.workspace_rule({ workspace = "%s%s", layout = "scrolling", gaps_out = { top = %d, right = %d, bottom = %d, left = %d } })' \
     "$PREFIX" "$1" "$GAP_TOP" "$GAP_SIDE" "$GAP_SIDE" "$GAP_SIDE"
@@ -135,7 +139,9 @@ cmd_create() {
   # The rule must exist before the first window creates the workspace. The
   # state comes last: a prune that runs during the moves cannot see the group.
   mkdir -p "$RULES_DIR"
+  echo "$SOLID_RULE" >"$RULES_DIR/omagroup.lua"
   rule_lua "$id" >"$(rule_file "$id")"
+  hyprctl eval "$SOLID_RULE" >/dev/null
   hyprctl eval "$(rule_lua "$id")" >/dev/null
 
   local moves=()
