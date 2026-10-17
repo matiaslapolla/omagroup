@@ -32,6 +32,8 @@ GAP_SIDE=48
 
 die() {
   echo "omagroup: $*" >&2
+  # The shell runs the CLI detached, so stderr reaches no one.
+  [[ ${OMAGROUP_NOTIFY:-} == 1 ]] && notify-send -a omagroup "omagroup" "$*" 2>/dev/null
   exit 1
 }
 
@@ -57,13 +59,11 @@ write_state() {
 
 group_exists() { read_state | jq -e --arg id "$1" 'any(.groups[]; .id == $id)' >/dev/null; }
 
-group_name() { read_state | jq -r --arg id "$1" '.groups[] | select(.id == $id) | .name'; }
-
 rule_file() { echo "$RULES_DIR/omagroup-$1.lua"; }
 
 # Members draw opaque: a translucent terminal would show the workspace below
 # and the group would stop looking like one window.
-SOLID_RULE='hl.window_rule({ name = "omagroup-solid", match = { workspace = "n[s:special:omagroup-]" }, opaque = true, force_rgbx = true })'
+SOLID_RULE="hl.window_rule({ name = \"omagroup-solid\", match = { workspace = \"n[s:$PREFIX]\" }, opaque = true, force_rgbx = true })"
 
 rule_lua() {
   printf 'hl.workspace_rule({ workspace = "%s%s", layout = "scrolling", gaps_out = { top = %d, right = %d, bottom = %d, left = %d } })' \
@@ -82,26 +82,49 @@ members() {
   hyprctl clients -j | jq -r --arg ws "$PREFIX$1" '.[] | select(.workspace.name == $ws) | .address'
 }
 
-# The group shown on the focused monitor, or nothing.
 focused_group() {
   hyprctl monitors -j | jq -r --arg p "$PREFIX" \
     '.[] | select(.focused) | .specialWorkspace.name | select(startswith($p)) | ltrimstr($p)'
 }
 
-shown_groups() {
-  hyprctl monitors -j | jq -r --arg p "$PREFIX" \
-    '.[] | .specialWorkspace.name | select(startswith($p)) | ltrimstr($p)'
+# The monitor that shows the group, or nothing when the group is hidden.
+shown_on() {
+  hyprctl monitors -j | jq -r --arg ws "$PREFIX$1" '.[] | select(.specialWorkspace.name == $ws) | .name'
 }
 
-toggle() { dispatch_all "hl.dsp.workspace.toggle_special(\"omagroup-$1\")"; }
+toggle_cmd() { echo "hl.dsp.workspace.toggle_special(\"omagroup-$1\")"; }
+toggle() { dispatch_all "$(toggle_cmd "$1")"; }
+
+move_cmd() { echo "hl.dsp.window.move({ workspace = \"$1\", window = \"address:$2\", follow = false })"; }
+
+# Layout and special-workspace dispatches act on the focused monitor, so
+# each one that targets a shown group first focuses the group's monitor.
+on_group_monitor() {
+  local id=$1 monitor
+  shift
+  monitor=$(shown_on "$id")
+  [[ -n $monitor ]] || die "group $id is hidden"
+  local focused
+  focused=$(hyprctl monitors -j | jq -r '.[] | select(.focused) | .name')
+  if [[ $monitor == "$focused" ]]; then
+    dispatch_all "$@"
+  else
+    dispatch_all "hl.dsp.focus({ monitor = \"$monitor\" })" "$@"
+  fi
+}
 
 delete_group() {
   read_state | jq --arg id "$1" '.groups |= map(select(.id != $id))' | write_state
   rm -f "$(rule_file "$1")"
 }
 
+# Above every id in the state and on every live workspace: a window that
+# outlived its group must not join a new group under the same id.
 next_id() {
-  read_state | jq -r '[.groups[].id | ltrimstr("og") | tonumber] | (max // 0) + 1 | "og\(.)"'
+  local live
+  live=$(hyprctl clients -j | jq --arg p "$PREFIX" '[.[].workspace.name | select(startswith($p)) | ltrimstr($p)]')
+  read_state | jq -r --argjson live "$live" \
+    '[(.groups[].id), $live[] | select(test("^og[0-9]+$")) | ltrimstr("og") | tonumber] | (max // 0) + 1 | "og\(.)"'
 }
 
 cmd_create() {
@@ -146,7 +169,7 @@ cmd_create() {
 
   local moves=()
   for address in "${addresses[@]}"; do
-    moves+=("hl.dsp.window.move({ workspace = \"$PREFIX$id\", window = \"address:$address\", follow = false })")
+    moves+=("$(move_cmd "$PREFIX$id" "$address")")
   done
   dispatch_all "${moves[@]}"
 
@@ -222,14 +245,6 @@ cmd_show() {
   [[ $(focused_group) == "$id" ]] || toggle "$id"
 }
 
-cmd_hide() {
-  local id=${1:-$(focused_group)}
-  [[ -n $id ]] || die "no group is shown on the focused monitor"
-  need_id "$id"
-  shown_groups | grep -qxF "$id" && toggle "$id"
-  return 0
-}
-
 target_or_focused() {
   local id=${1:-$(focused_group)}
   [[ -n $id ]] || die "no group given and none shown on the focused monitor"
@@ -237,18 +252,31 @@ target_or_focused() {
   echo "$id"
 }
 
+# An emptied special workspace stays shown, and new windows would open
+# inside it, so ungroup and close hide the group first.
+hide_if_shown() {
+  [[ -n $(shown_on "$1") ]] || return 0
+  on_group_monitor "$1" "$(toggle_cmd "$1")"
+}
+
+cmd_hide() {
+  local id
+  id=$(target_or_focused "${1:-}")
+  hide_if_shown "$id"
+}
+
 cmd_ungroup() {
   local id
   id=$(target_or_focused "${1:-}")
   local workspace
   workspace=$(hyprctl monitors -j | jq -r '.[] | select(.focused) | .activeWorkspace.id')
-  [[ $workspace =~ ^[0-9]+$ ]] || die "no active workspace"
+  [[ $workspace =~ ^-?[0-9]+$ ]] || die "no active workspace"
 
+  hide_if_shown "$id"
   local moves=() address
   while read -r address; do
-    [[ -n $address ]] && moves+=("hl.dsp.window.move({ workspace = \"$workspace\", window = \"address:$address\", follow = false })")
+    [[ -n $address ]] && moves+=("$(move_cmd "$workspace" "$address")")
   done < <(members "$id")
-  # Emptied, the special workspace hides itself.
   dispatch_all "${moves[@]}"
   delete_group "$id"
 }
@@ -258,6 +286,7 @@ cmd_close() {
   id=$(target_or_focused "${1:-}")
   local addresses=() address
   mapfile -t addresses < <(members "$id")
+  hide_if_shown "$id"
 
   local closes=()
   for address in "${addresses[@]}"; do
@@ -268,12 +297,23 @@ cmd_close() {
 
   ((${#addresses[@]})) || return 0
   sleep "$CLOSE_WAIT"
-  # A window that ignored the close request is still listed: end its process.
-  local pid
-  for pid in $(hyprctl clients -j | jq -r --argjson a "$(printf '%s\n' "${addresses[@]}" | jq -R . | jq -s .)" \
-    '.[] | select(.address as $x | $a | index($x)) | .pid | select(. > 0)'); do
-    kill -TERM "$pid" 2>/dev/null || true
-  done
+  # A window that ignored the close request is still listed: end its
+  # process, unless the process also owns windows outside the group
+  # (Chromium, Ghostty and kitty serve every window from one process).
+  local survivors
+  survivors=$(hyprctl clients -j | jq -r --argjson a "$(printf '%s\n' "${addresses[@]}" | jq -R . | jq -s .)" '
+    (map(select(.address as $x | $a | index($x) | not)) | map(.pid)) as $shared
+    | .[] | select(.address as $x | $a | index($x)) | select(.pid > 0)
+    | "\(.pid)\t\(if (.pid as $p | $shared | index($p)) then "shared" else "own" end)\t\(.class)"')
+  local pid kind class
+  while IFS=$'\t' read -r pid kind class; do
+    [[ -n $pid ]] || continue
+    if [[ $kind == own ]]; then
+      kill -TERM "$pid" 2>/dev/null || true
+    else
+      echo "omagroup: left $class open: its process also owns windows outside the group" >&2
+    fi
+  done <<<"$survivors"
 }
 
 cmd_prune() {
@@ -288,14 +328,17 @@ cmd_scroll() {
   (($# == 2)) || die "usage: omagroup scroll ID +col|-col"
   need_id "$1"
   [[ $2 == "+col" || $2 == "-col" ]] || die "scroll takes +col or -col"
-  dispatch_all "hl.dsp.layout(\"move $2\")"
+  # Moving the focus, not the view, keeps a column on screen at the ends.
+  local direction=r
+  [[ $2 == "-col" ]] && direction=l
+  on_group_monitor "$1" "hl.dsp.layout(\"focus $direction\")"
 }
 
 cmd_resize() {
   (($# == 2)) || die "usage: omagroup resize ID +0.1|-0.1"
   need_id "$1"
   [[ $2 =~ ^[+-]0\.[0-9]+$ ]] || die "resize takes a relative width such as +0.1"
-  dispatch_all "hl.dsp.layout(\"colresize $2\")"
+  on_group_monitor "$1" "hl.dsp.layout(\"colresize $2\")"
 }
 
 cmd_pick() {
@@ -308,7 +351,7 @@ main() {
   (($#)) && shift
   case $command in
     pick | create | list | windows | show | hide | ungroup | close | prune | scroll | resize) "cmd_$command" "$@" ;;
-    -h | --help | help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//' ;;
+    -h | --help | help) awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0" ;;
     *) die "unknown command: $command (see omagroup --help)" ;;
   esac
 }

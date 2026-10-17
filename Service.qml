@@ -11,7 +11,9 @@ Item {
 
   readonly property string cli: String(Qt.resolvedUrl("bin/omagroup")).replace(/^file:\/\//, "")
   readonly property string prefix: "special:omagroup-"
-  readonly property string statePath: (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state") + "/omagroup/groups.json"
+  // Same lookup as STATE_DIR in bin/omagroup.
+  readonly property string statePath: (Quickshell.env("OMAGROUP_STATE_DIR")
+    || (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state") + "/omagroup") + "/groups.json"
 
   // { "DP-1": "og1" } for each monitor that shows a group.
   property var shown: ({})
@@ -20,8 +22,13 @@ Item {
   // Toplevel objects are not deeply reactive; every event bumps this.
   property int revision: 0
 
+  // OMAGROUP_NOTIFY makes the CLI report its errors as notifications.
   function run(args) {
-    Quickshell.execDetached([root.cli].concat(args))
+    Quickshell.execDetached(["env", "OMAGROUP_NOTIFY=1", root.cli].concat(args))
+  }
+
+  function windowCount(n) {
+    return n + (n === 1 ? " window" : " windows")
   }
 
   function groupFor(id) {

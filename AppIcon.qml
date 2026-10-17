@@ -11,7 +11,6 @@ Item {
   property int size: 24
 
   readonly property var entry: root.appClass ? DesktopEntries.heuristicLookup(String(root.appClass).trim()) : null
-  readonly property string appName: root.entry && root.entry.name ? root.entry.name : root.appClass
 
   readonly property string source: {
     var cls = String(root.appClass || "").trim()

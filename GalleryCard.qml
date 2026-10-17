@@ -92,6 +92,7 @@ Rectangle {
           id: locationText
           anchors.centerIn: parent
           text: root.entry.location || ""
+          textFormat: Text.PlainText
           color: Color.accent
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
@@ -103,6 +104,7 @@ Rectangle {
         anchors.verticalCenter: pill.verticalCenter
         width: parent.width - pill.width - parent.spacing
         text: root.entry.process || root.entry.class || ""
+        textFormat: Text.PlainText
         color: Color.foreground
         font.family: Style.font.family
         font.pixelSize: Style.font.body
@@ -114,6 +116,7 @@ Rectangle {
     Text {
       width: parent.width
       text: root.entry.title || ""
+      textFormat: Text.PlainText
       color: Util.alpha(Color.foreground, 0.7)
       font.family: Style.font.family
       font.pixelSize: Style.font.bodySmall

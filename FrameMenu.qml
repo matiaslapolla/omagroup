@@ -7,7 +7,7 @@ Rectangle {
   id: root
 
   property bool open: false
-  property int members: 0
+  property string countLabel: ""
   property bool confirmClose: false
   signal picked(string action)
 
@@ -76,7 +76,7 @@ Rectangle {
           Text {
             anchors.verticalCenter: parent.verticalCenter
             text: row.armed
-              ? "Click again: close " + root.members + (root.members === 1 ? " window" : " windows")
+              ? "Click again: close " + root.countLabel
               : row.modelData.label
             color: Color.popups.text
             font.family: Style.font.family

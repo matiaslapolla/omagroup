@@ -29,11 +29,11 @@ clients() {
   }]' <<<"$1" >"$FAKE_CLIENTS"
 }
 
-# monitors "<special name shown on the focused monitor>"
+# monitors "<special on focused DP-1>" ["<special on HDMI-A-1>"] [<active workspace id of DP-1>]
 monitors() {
-  jq -n --arg special "$1" '[
-    { id: 1, name: "DP-1", focused: true, activeWorkspace: { id: 3, name: "3" }, specialWorkspace: { id: 0, name: $special } },
-    { id: 0, name: "HDMI-A-1", focused: false, activeWorkspace: { id: 11, name: "11" }, specialWorkspace: { id: 0, name: "" } }
+  jq -n --arg special "$1" --arg other "${2:-}" --argjson active "${3:-3}" '[
+    { id: 1, name: "DP-1", focused: true, activeWorkspace: { id: $active, name: ($active | tostring) }, specialWorkspace: { id: 0, name: $special } },
+    { id: 0, name: "HDMI-A-1", focused: false, activeWorkspace: { id: 11, name: "11" }, specialWorkspace: { id: 0, name: $other } }
   ]' >"$FAKE_MONITORS"
 }
 
@@ -113,6 +113,53 @@ test_hide_toggles_only_a_shown_group() {
   assert_eq "$(dispatches)" 'hl.dsp.workspace.toggle_special("omagroup-og1")'
 }
 
+test_hide_on_other_monitor_focuses_it_first() {
+  clients '[{"address":"0xa","workspace":"3"}]'
+  "$CLI" create 0xa >/dev/null
+  monitors "" special:omagroup-og1
+  : >"$FAKE_LOG"
+  "$CLI" hide og1
+  assert_eq "$(dispatches)" $'hl.dsp.focus({ monitor = "HDMI-A-1" })\nhl.dsp.workspace.toggle_special("omagroup-og1")'
+}
+
+test_scroll_of_hidden_group_fails() {
+  clients '[{"address":"0xa","workspace":"3"}]'
+  "$CLI" create 0xa >/dev/null
+  : >"$FAKE_LOG"
+  "$CLI" scroll og1 +col 2>/dev/null
+  assert_eq "$?" 1
+  assert_eq "$(dispatches)" ""
+}
+
+test_create_skips_ids_still_used_by_live_windows() {
+  clients '[{"address":"0xa","workspace":"special:omagroup-og4"},{"address":"0xb","workspace":"3"}]'
+  assert_eq "$("$CLI" create 0xb)" og5
+}
+
+test_close_keeps_a_process_shared_with_other_windows() {
+  sleep 30 &
+  local shared=$!
+  clients "[{\"address\":\"0xa\",\"workspace\":\"3\",\"pid\":$shared}]"
+  "$CLI" create 0xa >/dev/null
+  clients "[{\"address\":\"0xa\",\"workspace\":\"special:omagroup-og1\",\"pid\":$shared},{\"address\":\"0xb\",\"workspace\":\"5\",\"pid\":$shared}]"
+  local err
+  err=$("$CLI" close og1 2>&1)
+  assert_contains "$err" "left foot open"
+  kill -0 "$shared" 2>/dev/null && pass || fail "shared process was killed"
+  kill "$shared"
+  wait "$shared" 2>/dev/null
+}
+
+test_ungroup_accepts_a_named_workspace() {
+  clients '[{"address":"0xa","workspace":"3"}]'
+  "$CLI" create 0xa >/dev/null
+  clients '[{"address":"0xa","workspace":"special:omagroup-og1"}]'
+  monitors special:omagroup-og1 "" -1337
+  : >"$FAKE_LOG"
+  "$CLI" ungroup
+  assert_eq "$(dispatches | tail -1)" 'hl.dsp.window.move({ workspace = "-1337", window = "address:0xa", follow = false })'
+}
+
 test_show_skips_toggle_when_already_shown() {
   clients '[{"address":"0xa","workspace":"3"}]'
   "$CLI" create 0xa >/dev/null
@@ -135,9 +182,11 @@ test_ungroup_moves_members_to_active_workspace_and_deletes() {
   "$CLI" create 0xa 0xb >/dev/null
   clients '[{"address":"0xa","workspace":"special:omagroup-og1"},{"address":"0xb","workspace":"special:omagroup-og1"},{"address":"0xc","workspace":"5"}]'
   : >"$FAKE_LOG"
+  monitors special:omagroup-og1
   "$CLI" ungroup og1
   local d
   d=$(dispatches)
+  assert_eq "$(head -1 <<<"$d")" 'hl.dsp.workspace.toggle_special("omagroup-og1")'
   assert_contains "$d" 'hl.dsp.window.move({ workspace = "3", window = "address:0xa", follow = false })'
   assert_contains "$d" 'hl.dsp.window.move({ workspace = "3", window = "address:0xb", follow = false })'
   assert_not_contains "$d" '0xc'
@@ -171,6 +220,7 @@ test_prune_deletes_only_empty_groups() {
 test_scroll_and_resize_validate_arguments() {
   clients '[{"address":"0xa","workspace":"3"}]'
   "$CLI" create 0xa >/dev/null
+  monitors special:omagroup-og1
   : >"$FAKE_LOG"
   "$CLI" scroll og1 '+col"); os.exit(' 2>/dev/null
   assert_eq "$?" 1
@@ -178,7 +228,7 @@ test_scroll_and_resize_validate_arguments() {
   assert_eq "$?" 1
   "$CLI" scroll og1 +col
   "$CLI" resize og1 -0.1
-  assert_eq "$(dispatches)" $'hl.dsp.layout("move +col")\nhl.dsp.layout("colresize -0.1")'
+  assert_eq "$(dispatches)" $'hl.dsp.layout("focus r")\nhl.dsp.layout("colresize -0.1")'
 }
 
 test_windows_labels_locations() {

@@ -20,7 +20,7 @@ PanelWindow {
   readonly property string monitorName: root.screen ? root.screen.name : ""
   readonly property string groupId: root.service && root.service.shown[root.monitorName] || ""
   readonly property var group: root.groupId ? root.service.groupFor(root.groupId) : null
-  readonly property int members: root.groupId ? root.service.memberCount(root.groupId) : 0
+  readonly property int memberCount: root.groupId ? root.service.memberCount(root.groupId) : 0
   readonly property string title: root.group ? root.group.name : root.groupId
 
   visible: root.groupId !== ""
@@ -69,7 +69,6 @@ PanelWindow {
       border.width: 1
       border.color: Util.alpha(Color.accent, 0.55)
 
-      // One wheel notch scrolls one column; with Shift it resizes the focused one.
       WheelHandler {
         property real pending: 0
         acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
@@ -99,6 +98,7 @@ PanelWindow {
         Text {
           anchors.verticalCenter: parent.verticalCenter
           text: root.title
+          textFormat: Text.PlainText
           color: Color.popups.text
           font.family: Style.font.family
           font.pixelSize: Style.font.body
@@ -106,7 +106,7 @@ PanelWindow {
         }
         Text {
           anchors.verticalCenter: parent.verticalCenter
-          text: root.members + (root.members === 1 ? " window" : " windows")
+          text: root.service ? root.service.windowCount(root.memberCount) : ""
           color: Util.alpha(Color.popups.text, 0.6)
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
@@ -119,14 +119,13 @@ PanelWindow {
         anchors.verticalCenter: parent.verticalCenter
         spacing: Style.space(4)
 
-        FrameButton { glyph: "󰁍"; hint: "Scroll left"; onActivated: root.run(["scroll", root.groupId, "-col"]) }
-        FrameButton { glyph: "󰁔"; hint: "Scroll right"; onActivated: root.run(["scroll", root.groupId, "+col"]) }
-        FrameButton { glyph: "󰩨"; hint: "Narrower"; onActivated: root.run(["resize", root.groupId, "-0.1"]) }
-        FrameButton { glyph: "󰩩"; hint: "Wider"; onActivated: root.run(["resize", root.groupId, "+0.1"]) }
+        FrameButton { glyph: "󰁍"; onActivated: root.run(["scroll", root.groupId, "-col"]) }
+        FrameButton { glyph: "󰁔"; onActivated: root.run(["scroll", root.groupId, "+col"]) }
+        FrameButton { glyph: "󰩨"; onActivated: root.run(["resize", root.groupId, "-0.1"]) }
+        FrameButton { glyph: "󰩩"; onActivated: root.run(["resize", root.groupId, "+0.1"]) }
         FrameButton {
           id: menuButton
           glyph: "⋯"
-          hint: "Menu"
           active: menu.open
           onActivated: menu.open ? menu.close() : menu.show()
         }
@@ -137,7 +136,7 @@ PanelWindow {
       id: menu
       x: Math.min(content.width - width, menuButton.mapToItem(content, menuButton.width, 0).x - width)
       y: root.barTop + root.barHeight + Style.space(6)
-      members: root.members
+      countLabel: root.service ? root.service.windowCount(root.memberCount) : ""
       onPicked: function(action) {
         menu.close()
         root.run([action, root.groupId])

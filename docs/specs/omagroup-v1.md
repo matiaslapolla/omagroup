@@ -16,7 +16,6 @@ The user develops web platforms. The user wants a terminal and a browser, or any
 - Groups that survive a logout. Window addresses change at each login.
 - More than one shown group on one monitor at a time.
 - A dock or bar widget for hidden groups. harbor can show them in a later version.
-- Tabs inside a group.
 
 ## Terms
 All terms are in [CONTEXT.md](../../CONTEXT.md).
@@ -48,14 +47,18 @@ omagroup scroll ID +col|-col   move the scrolling view
 omagroup resize ID +0.1|-0.1   resize the focused column
 ```
 - The CLI validates each address (`0x` and hex) and each group id (`og` and digits). It rejects other input.
-- `create` takes the next free id, writes the state and the rule, moves the windows with `follow = false`, then shows the group.
-- `close` sends `hl.dsp.window.close` to each member. After 3 seconds, it sends SIGTERM to the process of each member that is still open.
+- `create` takes an id above every id in the state and on live workspaces. It writes the rule, moves the windows with `follow = false`, writes the state, then shows the group. The state comes last, so a prune during the moves cannot delete the group.
+- `close` sends `hl.dsp.window.close` to each member. After 3 seconds, it sends SIGTERM to the process of each member that is still open. It skips a process that also owns windows outside the group, and prints a warning.
+- `hide`, `scroll` and `resize` first focus the monitor that shows the group, because these dispatches act on the focused monitor. `scroll` and `resize` fail on a hidden group. `scroll` moves the focus one column (`focus r` or `focus l`), so a column always stays on screen.
+- `ungroup` and `close` hide the group first. An emptied special workspace stays shown, and new windows would open inside it.
+- When the shell runs the CLI, it sets `OMAGROUP_NOTIFY=1`. The CLI then shows each error as a notification.
 - `ungroup` moves each member to the active regular workspace of the focused monitor.
 
 ### State
 - Groups: `~/.local/state/omagroup/groups.json`, `{"groups":[{"id":"og1","name":"dev"}]}`.
 - Rules: `~/.local/state/omarchy/workspace-layouts/omagroup-<id>.lua`. Omarchy loads this folder at each config reload, so the rule survives `hyprctl reload`. `create` also applies the rule at once with `hyprctl eval`.
 - The rule sets `layout = "scrolling"` and `gaps_out` with a top gap that holds the frame.
+- `omagroup.lua` in the same folder makes members opaque (`opaque`, `force_rgbx`). A translucent terminal would show the workspace below. The file stays after the last group goes.
 - Members come from `hyprctl clients -j`, filtered by the workspace name.
 
 ### Gallery
@@ -69,13 +72,14 @@ omagroup resize ID +0.1|-0.1   resize the focused column
 ### Frame
 - The Service tracks the shown special workspace of each monitor with the `activespecial` event.
 - While a group shows on a monitor, a frame shows in the top gap of that monitor, as wide as the group.
-- The frame has the group name, the member count and a `⋯` button.
+- The frame has the group name, the member count, buttons for scroll left, scroll right, narrower and wider, and a `⋯` button.
 - The mouse wheel on the frame runs `omagroup scroll`. Shift with the wheel runs `omagroup resize`.
-- The `⋯` menu has Minimize, Ungroup and Close. Close asks for a second click on the same row before it runs.
+- The `⋯` menu has Minimize, Ungroup and Close all. Close all asks for a second click on the same row within 3 seconds before it runs.
 
 ### Launcher and install
 - `install.sh` links the repo into `~/.config/omarchy/plugins/matiaslapolla.omagroup`, links `bin/omagroup` into `~/.local/bin` and enables the plugin.
-- The README gives the menu row for `~/.config/omarchy/extensions/omarchy-menu.jsonc`. The row runs `omagroup` and has the aliases `omagroup` and `group windows`.
+- The README gives two menu rows for `~/.config/omarchy/extensions/omarchy-menu.jsonc`. The first runs `omagroup` and has the aliases `omagroup` and `group windows`. The second runs `omagroup show` and shows only while a group is hidden.
+- The IPC target `omagroup` has `pick`, `cancel` and `shown`.
 - `omarchy plugin add` does not run install hooks. The README tells the user to link the CLI by hand after a plugin add.
 
 ## Acceptance criteria

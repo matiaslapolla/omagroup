@@ -1,12 +1,10 @@
 import QtQuick
 import qs.Commons
 
-// A square icon button of the frame.
 Rectangle {
   id: root
 
   property string glyph: ""
-  property string hint: ""
   property bool active: false
   signal activated()
 
