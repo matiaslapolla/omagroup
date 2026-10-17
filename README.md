@@ -15,6 +15,7 @@ with Lua config, Omarchy shell).
   menu with **Minimize**, **Ungroup** and **Close all**. Each button has a
   tooltip. The wheel on the panel moves one column, and Shift with the
   wheel resizes the focused one.
+- Drag the header to another monitor to move the group there.
 
 Typical use: a terminal, the dev server logs and a browser on `localhost`,
 side by side in one unit that you can hide and bring back.
@@ -69,6 +70,7 @@ omagroup ungroup [ID]          move the members to the active workspace
 omagroup close [ID]            close the members; SIGTERM what stays open after 3 s
 omagroup scroll ID +col|-col
 omagroup resize ID +0.1|-0.1
+omagroup move ID MONITOR       show the group on MONITOR (--cursor: the one under the pointer)
 omagroup menu                  open the panel menu of the shown group
 omagroup geometry              panel margin, pad and header size (JSON)
 ```

@@ -5,5 +5,6 @@ printf '%s\n' "$*" >>"$FAKE_LOG"
 case "$1 ${2:-}" in
   "clients -j") cat "$FAKE_CLIENTS" ;;
   "monitors -j") cat "$FAKE_MONITORS" ;;
+  "cursorpos ") echo "${FAKE_CURSOR:-0, 0}" ;;
   *) echo ok ;;
 esac

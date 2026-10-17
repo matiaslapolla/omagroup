@@ -14,6 +14,7 @@
 #   omagroup prune                  delete groups without members
 #   omagroup scroll ID +col|-col
 #   omagroup resize ID +0.1|-0.1
+#   omagroup move ID MONITOR|--cursor  show the group on another monitor
 #   omagroup menu                   open the frame menu of the shown group
 #   omagroup geometry               frame geometry for the shell (JSON)
 
@@ -346,6 +347,30 @@ cmd_resize() {
   on_group_monitor "$1" "hl.dsp.layout(\"colresize $2\")"
 }
 
+# The monitor under the pointer. cursorpos is in global logical pixels, and
+# a monitor's logical size is its mode size divided by its scale.
+cursor_monitor() {
+  local x y
+  IFS=', ' read -r x y < <(hyprctl cursorpos)
+  [[ $x =~ ^-?[0-9]+$ && $y =~ ^-?[0-9]+$ ]] || die "no cursor position"
+  hyprctl monitors -j | jq -r --argjson x "$x" --argjson y "$y" '
+    .[] | select($x >= .x and $x < .x + (.width / .scale) and $y >= .y and $y < .y + (.height / .scale)) | .name' | head -1
+}
+
+# Showing a special workspace on the focused monitor takes it from the
+# monitor that showed it, so a move is focus + toggle. Another group shown on
+# the target monitor gets hidden.
+cmd_move() {
+  (($# == 2)) || die "usage: omagroup move ID MONITOR|--cursor"
+  need_id "$1"
+  local id=$1 target=$2
+  [[ $target == --cursor ]] && target=$(cursor_monitor)
+  [[ -n $target ]] || die "no monitor under the cursor"
+  hyprctl monitors -j | jq -e --arg m "$target" 'any(.[]; .name == $m)' >/dev/null || die "no monitor $target"
+  [[ $(shown_on "$id") == "$target" ]] && return 0
+  dispatch_all "hl.dsp.focus({ monitor = \"$target\" })" "$(toggle_cmd "$id")"
+}
+
 cmd_geometry() {
   printf '{"margin":%d,"pad":%d,"header":%d}\n' "$MARGIN" "$PAD" "$HEADER"
 }
@@ -365,7 +390,7 @@ main() {
   local command=${1:-pick}
   (($#)) && shift
   case $command in
-    pick | create | list | windows | show | hide | ungroup | close | prune | scroll | resize | menu | geometry) "cmd_$command" "$@" ;;
+    pick | create | list | windows | show | hide | ungroup | close | prune | scroll | resize | move | menu | geometry) "cmd_$command" "$@" ;;
     -h | --help | help) awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0" ;;
     *) die "unknown command: $command (see omagroup --help)" ;;
   esac

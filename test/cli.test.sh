@@ -32,8 +32,8 @@ clients() {
 # monitors "<special on focused DP-1>" ["<special on HDMI-A-1>"] [<active workspace id of DP-1>]
 monitors() {
   jq -n --arg special "$1" --arg other "${2:-}" --argjson active "${3:-3}" '[
-    { id: 1, name: "DP-1", focused: true, activeWorkspace: { id: $active, name: ($active | tostring) }, specialWorkspace: { id: 0, name: $special } },
-    { id: 0, name: "HDMI-A-1", focused: false, activeWorkspace: { id: 11, name: "11" }, specialWorkspace: { id: 0, name: $other } }
+    { id: 1, name: "DP-1", focused: true, x: 0, y: 0, width: 3440, height: 1440, scale: 1.25, activeWorkspace: { id: $active, name: ($active | tostring) }, specialWorkspace: { id: 0, name: $special } },
+    { id: 0, name: "HDMI-A-1", focused: false, x: 2752, y: 0, width: 2560, height: 1440, scale: 1.25, activeWorkspace: { id: 11, name: "11" }, specialWorkspace: { id: 0, name: $other } }
   ]' >"$FAKE_MONITORS"
 }
 
@@ -244,6 +244,33 @@ test_rule_gaps_follow_geometry() {
   "$CLI" create 0xa >/dev/null
   assert_eq "$("$CLI" geometry)" '{"margin":32,"pad":8,"header":40}'
   assert_contains "$(cat "$T/rules/omagroup-og1.lua")" 'gaps_out = { top = 72, right = 40, bottom = 40, left = 40 }'
+}
+
+test_move_shows_the_group_on_the_monitor_under_the_cursor() {
+  clients '[{"address":"0xa","workspace":"3"}]'
+  "$CLI" create 0xa >/dev/null
+  monitors special:omagroup-og1
+  : >"$FAKE_LOG"
+  FAKE_CURSOR="3000, 400" "$CLI" move og1 --cursor
+  assert_eq "$(dispatches)" $'hl.dsp.focus({ monitor = "HDMI-A-1" })\nhl.dsp.workspace.toggle_special("omagroup-og1")'
+}
+
+test_move_to_the_same_monitor_does_nothing() {
+  clients '[{"address":"0xa","workspace":"3"}]'
+  "$CLI" create 0xa >/dev/null
+  monitors special:omagroup-og1
+  : >"$FAKE_LOG"
+  FAKE_CURSOR="100, 100" "$CLI" move og1 --cursor
+  assert_eq "$(dispatches)" ""
+}
+
+test_move_rejects_an_unknown_monitor() {
+  clients '[{"address":"0xa","workspace":"3"}]'
+  "$CLI" create 0xa >/dev/null
+  : >"$FAKE_LOG"
+  "$CLI" move og1 'DP-9"})' 2>/dev/null
+  assert_eq "$?" 1
+  assert_eq "$(dispatches)" ""
 }
 
 test_unknown_group_is_rejected() {

@@ -53,6 +53,11 @@ In v1 the group does not look contained. Columns of the scrolling tape overflow 
 - Rows: Minimize (`md-window_minimize`), Ungroup (`md-ungroup`), Close all (`md-close_box_multiple`).
 - `omagroup menu` opens the menu of the group on the focused monitor, through the IPC function `menu`.
 
+### Drag to another monitor
+- A drag on the header, past 8 px, moves the group. The panel fades to 70 % and the count reads "Release over a monitor to move the group".
+- On release, the frame runs `omagroup move ID --cursor`. The CLI finds the monitor under `hyprctl cursorpos`, focuses it and toggles the group there. Hyprland takes a special workspace from the monitor that showed it.
+- `omagroup move ID MONITOR` does the same from the terminal. A move to the monitor that already shows the group does nothing.
+
 ## Acceptance criteria
 - [ ] `make check` passes, and a test checks the gaps that the rule gets from `MARGIN`, `PAD` and `HEADER`.
 - [ ] `omagroup geometry` prints `{"margin":32,"pad":8,"header":40}`.
@@ -60,3 +65,5 @@ In v1 the group does not look contained. Columns of the scrolling tape overflow 
 - [ ] `omagroup menu` opens the menu, and a screenshot shows it under `⋯`.
 - [ ] Each frame button shows its tooltip on hover.
 - [ ] A click in the inner area reaches the member under the pointer.
+- [ ] Tests check the dispatches of `move --cursor`, a move to the same monitor and an unknown monitor.
+- [ ] A drag of the header from one monitor to the other shows the group and its panel on the drop monitor.

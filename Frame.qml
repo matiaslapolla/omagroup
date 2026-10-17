@@ -39,6 +39,7 @@ PanelWindow {
     return Qt.rgba(c.r, c.g, c.b, 1)
   }
   readonly property color mutedText: Util.alpha(Color.popups.text, 0.7)
+  property bool dragging: false
 
   visible: root.groupId !== "" && root.geometry !== null
   anchors { top: true; bottom: true; left: true; right: true }
@@ -97,6 +98,7 @@ PanelWindow {
   Shape {
     anchors.fill: parent
     preferredRendererType: Shape.CurveRenderer
+    opacity: root.dragging ? 0.7 : 1
 
     ShapePath {
       fillColor: Util.alpha(Color.background, 0.75)
@@ -148,6 +150,29 @@ PanelWindow {
     }
   }
 
+  // Dragging the header to another monitor moves the group there. The
+  // pointer stays grabbed by this surface while the button is down, and the
+  // CLI reads the drop point from `hyprctl cursorpos`.
+  MouseArea {
+    property point pressAt
+    x: root.panelRect.x
+    y: root.panelRect.y
+    width: root.panelRect.width
+    height: root.header
+    preventStealing: true
+    cursorShape: root.dragging ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+    onPressed: function(mouse) { pressAt = Qt.point(mouse.x, mouse.y) }
+    onPositionChanged: function(mouse) {
+      if (!root.dragging && Math.abs(mouse.x - pressAt.x) + Math.abs(mouse.y - pressAt.y) > Style.space(8)) root.dragging = true
+    }
+    onReleased: {
+      if (!root.dragging) return
+      root.dragging = false
+      root.run(["move", root.groupId, "--cursor"])
+    }
+    onCanceled: root.dragging = false
+  }
+
   Row {
     x: root.innerRect.x + Style.space(4)
     y: root.panelRect.y + Math.round((root.header - height) / 2)
@@ -171,7 +196,8 @@ PanelWindow {
     }
     Text {
       anchors.verticalCenter: parent.verticalCenter
-      text: root.service ? root.service.windowCount(root.memberCount) : ""
+      text: root.dragging ? "Release over a monitor to move the group"
+        : root.service ? root.service.windowCount(root.memberCount) : ""
       color: Util.alpha(Color.popups.text, 0.45)
       font.family: Style.font.family
       font.pixelSize: Style.font.caption
