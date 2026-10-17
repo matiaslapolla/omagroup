@@ -239,6 +239,13 @@ test_windows_labels_locations() {
   assert_eq "$(jq -r '.[1].location' <<<"$out")" "minimized"
 }
 
+test_rule_gaps_follow_geometry() {
+  clients '[{"address":"0xa","workspace":"3"}]'
+  "$CLI" create 0xa >/dev/null
+  assert_eq "$("$CLI" geometry)" '{"margin":32,"pad":8,"header":40}'
+  assert_contains "$(cat "$T/rules/omagroup-og1.lua")" 'gaps_out = { top = 72, right = 40, bottom = 40, left = 40 }'
+}
+
 test_unknown_group_is_rejected() {
   "$CLI" hide og9 2>/dev/null
   assert_eq "$?" 1

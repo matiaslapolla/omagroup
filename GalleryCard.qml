@@ -23,8 +23,7 @@ Rectangle {
   border.width: root.selected ? 2 : 1
   border.color: root.selected ? Color.accent : Util.alpha(Color.foreground, 0.15)
 
-  HoverHandler { id: hover; cursorShape: Qt.PointingHandCursor }
-  TapHandler { onTapped: root.toggled() }
+  MouseArea { id: hover; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; readonly property bool hovered: containsMouse; onClicked: root.toggled() }
 
   Column {
     id: column

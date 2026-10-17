@@ -26,6 +26,5 @@ Rectangle {
     font.bold: root.primary
   }
 
-  HoverHandler { id: hover; cursorShape: Qt.PointingHandCursor }
-  TapHandler { onTapped: if (root.enabled) root.activated() }
+  MouseArea { id: hover; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; readonly property bool hovered: containsMouse; onClicked: root.activated() }
 }

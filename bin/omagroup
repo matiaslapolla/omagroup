@@ -14,6 +14,8 @@
 #   omagroup prune                  delete groups without members
 #   omagroup scroll ID +col|-col
 #   omagroup resize ID +0.1|-0.1
+#   omagroup menu                   open the frame menu of the shown group
+#   omagroup geometry               frame geometry for the shell (JSON)
 
 set -euo pipefail
 
@@ -26,9 +28,12 @@ RULES_DIR="${OMAGROUP_RULES_DIR:-$STATE_HOME/omarchy/workspace-layouts}"
 CLOSE_WAIT="${OMAGROUP_CLOSE_WAIT:-3}"
 PREFIX="special:omagroup-"
 
-# The top gap holds the frame that Frame.qml draws; keep both in sync.
-GAP_TOP=72
-GAP_SIDE=48
+# Frame geometry. Frame.qml reads it with `omagroup geometry`: the panel
+# starts MARGIN from the work area, the header takes HEADER on top, and PAD
+# separates the panel edge from the members on the other sides.
+MARGIN=32
+PAD=8
+HEADER=40
 
 die() {
   echo "omagroup: $*" >&2
@@ -67,7 +72,7 @@ SOLID_RULE="hl.window_rule({ name = \"omagroup-solid\", match = { workspace = \"
 
 rule_lua() {
   printf 'hl.workspace_rule({ workspace = "%s%s", layout = "scrolling", gaps_out = { top = %d, right = %d, bottom = %d, left = %d } })' \
-    "$PREFIX" "$1" "$GAP_TOP" "$GAP_SIDE" "$GAP_SIDE" "$GAP_SIDE"
+    "$PREFIX" "$1" $((MARGIN + HEADER)) $((MARGIN + PAD)) $((MARGIN + PAD)) $((MARGIN + PAD))
 }
 
 # One hyprctl call for a list of Lua dispatches.
@@ -341,6 +346,16 @@ cmd_resize() {
   on_group_monitor "$1" "hl.dsp.layout(\"colresize $2\")"
 }
 
+cmd_geometry() {
+  printf '{"margin":%d,"pad":%d,"header":%d}\n' "$MARGIN" "$PAD" "$HEADER"
+}
+
+cmd_menu() {
+  command -v omarchy-shell >/dev/null || die "omarchy-shell not found"
+  [[ -n $(focused_group) ]] || die "no group is shown on the focused monitor"
+  omarchy-shell omagroup menu >/dev/null
+}
+
 cmd_pick() {
   command -v omarchy-shell >/dev/null || die "omarchy-shell not found"
   omarchy-shell omagroup pick >/dev/null
@@ -350,7 +365,7 @@ main() {
   local command=${1:-pick}
   (($#)) && shift
   case $command in
-    pick | create | list | windows | show | hide | ungroup | close | prune | scroll | resize) "cmd_$command" "$@" ;;
+    pick | create | list | windows | show | hide | ungroup | close | prune | scroll | resize | menu | geometry) "cmd_$command" "$@" ;;
     -h | --help | help) awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0" ;;
     *) die "unknown command: $command (see omagroup --help)" ;;
   esac

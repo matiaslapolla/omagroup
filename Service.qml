@@ -18,6 +18,11 @@ Item {
   // { "DP-1": "og1" } for each monitor that shows a group.
   property var shown: ({})
   property var groups: []
+  // From `omagroup geometry`; frames stay hidden until it loads.
+  property var geometry: null
+  // Bumped by the IPC function `menu`; the frame on menuMonitor opens its menu.
+  property int menuRequest: 0
+  property string menuMonitor: ""
 
   // Toplevel objects are not deeply reactive; every event bumps this.
   property int revision: 0
@@ -99,6 +104,16 @@ Item {
     }
   }
 
+  Process {
+    running: true
+    command: [root.cli, "geometry"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        try { root.geometry = JSON.parse(text) } catch (e) {}
+      }
+    }
+  }
+
   // A group whose last member left or closed; the CLI deletes it.
   Timer {
     id: pruneTimer
@@ -144,6 +159,10 @@ Item {
 
     function pick(): void { gallery.open() }
     function cancel(): void { gallery.close() }
+    function menu(): void {
+      root.menuMonitor = Hyprland.focusedMonitor ? Hyprland.focusedMonitor.name : ""
+      root.menuRequest++
+    }
     function shown(): string { return JSON.stringify(root.shown) }
   }
 }

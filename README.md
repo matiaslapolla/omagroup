@@ -8,9 +8,13 @@ with Lua config, Omarchy shell).
   monitor and process. Click the windows you want, in order, and press Enter.
 - The **group** is a Hyprland special workspace with the scrolling layout.
   Scroll, resize, focus and fullscreen are the native ones.
-- A **frame** above the group shows its name and member count. The wheel on
-  the frame scrolls one column. Shift with the wheel resizes the focused one.
-  Its `⋯` menu has **Minimize**, **Ungroup** and **Close all**.
+- A **panel** holds the group: an opaque frame with a small header, and a
+  scrim over the rest of the screen. Columns that scroll past the edge stay
+  hidden under it. A click on the scrim minimizes the group.
+- The header has previous and next column, narrower and wider, and a `⋯`
+  menu with **Minimize**, **Ungroup** and **Close all**. Each button has a
+  tooltip. The wheel on the panel moves one column, and Shift with the
+  wheel resizes the focused one.
 
 Typical use: a terminal, the dev server logs and a browser on `localhost`,
 side by side in one unit that you can hide and bring back.
@@ -65,6 +69,8 @@ omagroup ungroup [ID]          move the members to the active workspace
 omagroup close [ID]            close the members; SIGTERM what stays open after 3 s
 omagroup scroll ID +col|-col
 omagroup resize ID +0.1|-0.1
+omagroup menu                  open the panel menu of the shown group
+omagroup geometry              panel margin, pad and header size (JSON)
 ```
 
 Without an ID, `hide`, `ungroup` and `close` act on the group shown on the
@@ -73,7 +79,7 @@ focused monitor.
 ## How it works
 
 - Group `og1` is the workspace `special:omagroup-og1`. Its rule
-  (`layout = "scrolling"`, wide `gaps_out`) lives in
+  (`layout = "scrolling"`, `gaps_out` from `omagroup geometry`) lives in
   `~/.local/state/omarchy/workspace-layouts/omagroup-og1.lua`, which Omarchy
   loads on each config reload.
 - Members draw opaque (`opaque`, `force_rgbx`), so a translucent terminal does
@@ -90,6 +96,9 @@ for why a group is a special workspace and not a Hyprland tab group.
 
 ## Limits
 
+- Where no column covers the inner area, the dimmed workspace shows through.
+  Hyprland draws layer surfaces either below every window or above them, so
+  nothing can sit between the workspace and the members.
 - One shown group per monitor, because Hyprland shows one special workspace
   per monitor.
 - Groups do not survive a logout. Window addresses change at each login.

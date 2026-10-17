@@ -13,8 +13,8 @@ Rectangle {
 
   readonly property var rows: [
     { action: "hide", glyph: "󰖰", label: "Minimize" },
-    { action: "ungroup", glyph: "󰕱", label: "Ungroup" },
-    { action: "close", glyph: "󰅖", label: "Close all" }
+    { action: "ungroup", glyph: "󰕐", label: "Ungroup" },
+    { action: "close", glyph: "󰱝", label: "Close all" }
   ]
 
   function show() {
@@ -84,10 +84,13 @@ Rectangle {
           }
         }
 
-        HoverHandler { id: rowHover }
-
-        TapHandler {
-          onTapped: {
+        MouseArea {
+          id: rowHover
+          readonly property bool hovered: containsMouse
+          anchors.fill: parent
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onClicked: {
             if (row.modelData.action !== "close") root.picked(row.modelData.action)
             else if (root.confirmClose) root.picked("close")
             else root.confirmClose = true
