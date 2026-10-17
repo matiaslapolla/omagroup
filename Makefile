@@ -12,6 +12,8 @@ validate:
 lint:
 	$(QMLLINT) --import disable --unqualified disable --missing-property disable --missing-type disable --unresolved-type disable --inheritance-cycle disable --required disable --uncreatable-type disable --signal-handler-parameters disable *.qml
 	bash -n bin/omagroup test/cli.test.sh
+	for f in lib/*.js; do sed '/^\.pragma library$$/d' $$f | node --check --input-type=commonjs || exit 1; done
 
 test:
 	bash test/cli.test.sh
+	node --test 'test/*.test.mjs'

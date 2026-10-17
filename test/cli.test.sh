@@ -303,7 +303,16 @@ test_move_shows_the_group_on_the_monitor_under_the_cursor() {
   monitors special:omagroup-og1
   : >"$FAKE_LOG"
   FAKE_CURSOR="3000, 400" "$CLI" move og1 --cursor
-  assert_eq "$(dispatches)" $'hl.dsp.focus({ monitor = "HDMI-A-1" })\nhl.dsp.workspace.toggle_special("omagroup-og1")'
+  assert_eq "$(dispatches | head -2)" $'hl.dsp.focus({ monitor = "HDMI-A-1" })\nhl.dsp.workspace.toggle_special("omagroup-og1")'
+}
+
+test_move_resets_insets_that_do_not_fit_the_target() {
+  clients '[{"address":"0xa","workspace":"3"}]'
+  "$CLI" create 0xa >/dev/null
+  "$CLI" frame og1 32 32 32 1500
+  monitors special:omagroup-og1
+  FAKE_CURSOR="3000, 400" "$CLI" move og1 --cursor
+  assert_eq "$(jq -c '.groups[0].insets' "$T/state/groups.json")" '{"top":32,"right":32,"bottom":32,"left":32}'
 }
 
 test_move_to_the_same_monitor_does_nothing() {

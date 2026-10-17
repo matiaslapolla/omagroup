@@ -15,7 +15,14 @@ with Lua config, Omarchy shell).
   menu with **Minimize**, **Ungroup** and **Close all**. Each button has a
   tooltip. The wheel on the panel moves one column, and Shift with the
   wheel resizes the focused one.
-- Drag the header to another monitor to move the group there.
+- The group behaves like a floating window. Drag its header to move it, on
+  the same monitor or to another one, and drag an edge or corner to resize it.
+- A sidebar has one tab per window. A click focuses that window and centers
+  its column.
+- Only whole windows show. The panel covers a column that is partly out of
+  view, and every empty part of the panel, so no click reaches the windows
+  behind the group.
+- In desktop mode, grouped windows are tiled, and ungroup floats them again.
 
 Typical use: a terminal, the dev server logs and a browser on `localhost`,
 side by side in one unit that you can hide and bring back.
@@ -71,8 +78,10 @@ omagroup close [ID]            close the members; SIGTERM what stays open after 
 omagroup scroll ID +col|-col
 omagroup resize ID +0.1|-0.1
 omagroup move ID MONITOR       show the group on MONITOR (--cursor: the one under the pointer)
+omagroup frame ID T R B L      set the panel insets from the work area, in px
+omagroup focus ID ADDR         focus a member and center its column
 omagroup menu                  open the panel menu of the shown group
-omagroup geometry              panel margin, pad and header size (JSON)
+omagroup geometry              default inset, pad, header and sidebar size (JSON)
 ```
 
 Without an ID, `hide`, `ungroup` and `close` act on the group shown on the
@@ -98,9 +107,8 @@ for why a group is a special workspace and not a Hyprland tab group.
 
 ## Limits
 
-- Where no column covers the inner area, the dimmed workspace shows through.
-  Hyprland draws layer surfaces either below every window or above them, so
-  nothing can sit between the workspace and the members.
+- While you drag or resize, the panel shows a preview. The windows move on
+  release.
 - One shown group per monitor, because Hyprland shows one special workspace
   per monitor.
 - Groups do not survive a logout. Window addresses change at each login.

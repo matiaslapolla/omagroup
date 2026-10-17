@@ -42,6 +42,9 @@ SIDEBAR=200
 # From this inner width, columns take a third of it; below, the full width.
 # An odd count keeps whole neighbours around a centered column.
 WIDE=1800
+# The smallest panel; Frame.qml keeps the same limits while resizing.
+MIN_WIDTH=640
+MIN_HEIGHT=400
 
 die() {
   echo "omagroup: $*" >&2
@@ -109,9 +112,11 @@ fit_columns() {
   local inner
   inner=$(hyprctl monitors -j | jq -r --arg m "$monitor" --argjson side $((left + SIDEBAR + right + PAD)) \
     '.[] | select(.name == $m) | (.width / .scale) - .reserved[0] - .reserved[2] - $side | floor')
-  local width=1.0
-  ((inner >= WIDE)) && width=0.333
-  on_group_monitor "$id" "hl.dsp.layout(\"colresize all $width\")"
+  local width=1.0 nudge=0.999
+  ((inner >= WIDE)) && width=0.333 nudge=0.334
+  # A colresize to the current width is a no-op that skips the relayout, and
+  # new gaps from a rule only apply on a relayout: resize twice.
+  on_group_monitor "$id" "hl.dsp.layout(\"colresize all $nudge\")" "hl.dsp.layout(\"colresize all $width\")"
 }
 
 # One hyprctl call for a list of Lua dispatches.
@@ -418,6 +423,19 @@ cmd_move() {
   hyprctl monitors -j | jq -e --arg m "$target" 'any(.[]; .name == $m)' >/dev/null || die "no monitor $target"
   [[ $(shown_on "$id") == "$target" ]] && return 0
   dispatch_all "hl.dsp.focus({ monitor = \"$target\" })" "$(toggle_cmd "$id")"
+
+  # The insets travel with the group; on a smaller monitor they could leave
+  # a panel under the minimum size, so they fall back to the default.
+  local top right bottom left fits
+  read -r top right bottom left < <(group_insets "$id")
+  fits=$(hyprctl monitors -j | jq -r --arg m "$target" --argjson w $((left + right)) --argjson h $((top + bottom)) \
+    --argjson mw "$MIN_WIDTH" --argjson mh "$MIN_HEIGHT" \
+    '.[] | select(.name == $m) | ((.width / .scale) - .reserved[0] - .reserved[2] - $w >= $mw and (.height / .scale) - .reserved[1] - .reserved[3] - $h >= $mh)')
+  if [[ $fits == true ]]; then
+    fit_columns "$id"
+  else
+    cmd_frame "$id" "$INSET" "$INSET" "$INSET" "$INSET"
+  fi
 }
 
 cmd_geometry() {

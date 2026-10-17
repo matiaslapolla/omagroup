@@ -17,15 +17,19 @@ Item {
 
   // { "DP-1": "og1" } for each monitor that shows a group.
   property var shown: ({})
+  readonly property bool anyShown: Object.keys(root.shown).length > 0
+  // { "DP-1": { x, y } }: the top-left of each monitor's work area, in
+  // global logical px. A frame surface starts there.
+  property var origins: ({})
+  // { "og1": [client, ...] } from `hyprctl clients -j`, for shown groups.
+  property var members: ({})
+  property string activeAddress: ""
   property var groups: []
   // From `omagroup geometry`; frames stay hidden until it loads.
   property var geometry: null
   // Bumped by the IPC function `menu`; the frame on menuMonitor opens its menu.
   property int menuRequest: 0
   property string menuMonitor: ""
-
-  // Toplevel objects are not deeply reactive; every event bumps this.
-  property int revision: 0
 
   // OMAGROUP_NOTIFY makes the CLI report its errors as notifications.
   function run(args) {
@@ -41,21 +45,14 @@ Item {
     return null
   }
 
-  function memberCount(id) {
-    var _ = root.revision
-    var values = Hyprland.toplevels.values
-    var n = 0
-    for (var i = 0; i < values.length; i++) {
-      var ws = values[i].workspace
-      if (ws && ws.name === root.prefix + id) n++
-    }
-    return n
+  function membersOf(id) {
+    return root.members[id] || []
   }
 
   Connections {
     target: Hyprland
     function onRawEvent(event) {
-      root.revision++
+      if (root.anyShown) clientsTimer.restart()
       switch (event.name) {
       case "activespecial":
       case "focusedmon":
@@ -83,6 +80,45 @@ Item {
     }
   }
 
+  Timer {
+    id: clientsTimer
+    interval: 30
+    onTriggered: clientsQuery.running = true
+  }
+
+  // Scroll animations move the members without any event.
+  Timer {
+    interval: 300
+    repeat: true
+    running: root.anyShown
+    onTriggered: clientsQuery.running = true
+  }
+
+  Process {
+    id: clientsQuery
+    command: ["hyprctl", "clients", "-j"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var clients
+        try { clients = JSON.parse(text) } catch (e) { return }
+        var next = {}
+        var active = ""
+        for (var i = 0; i < clients.length; i++) {
+          var c = clients[i]
+          var ws = c.workspace ? c.workspace.name : ""
+          if (ws.indexOf(root.prefix) !== 0) continue
+          var id = ws.slice(root.prefix.length)
+          if (!next[id]) next[id] = []
+          next[id].push({ address: c.address, class: c["class"], title: c.title, at: c.at, size: c.size })
+          if (c.focusHistoryID === 0) active = c.address
+        }
+        // A string compare keeps bindings quiet when nothing moved.
+        if (JSON.stringify(next) !== JSON.stringify(root.members)) root.members = next
+        root.activeAddress = active
+      }
+    }
+  }
+
   Process {
     id: monitorsQuery
     running: true
@@ -90,16 +126,22 @@ Item {
     stdout: StdioCollector {
       onStreamFinished: {
         var next = {}
+        var origins = {}
         try {
           var monitors = JSON.parse(text)
           for (var i = 0; i < monitors.length; i++) {
-            var name = monitors[i].specialWorkspace ? monitors[i].specialWorkspace.name : ""
-            if (name.indexOf(root.prefix) === 0) next[monitors[i].name] = name.slice(root.prefix.length)
+            var m = monitors[i]
+            var name = m.specialWorkspace ? m.specialWorkspace.name : ""
+            if (name.indexOf(root.prefix) === 0) next[m.name] = name.slice(root.prefix.length)
+            var reserved = m.reserved || [0, 0, 0, 0]
+            origins[m.name] = { x: m.x + reserved[0], y: m.y + reserved[1] }
           }
         } catch (e) {
           return
         }
         root.shown = next
+        root.origins = origins
+        clientsQuery.running = true
       }
     }
   }
