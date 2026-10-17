@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "matiaslapolla.omagroup",
+  "name": "omagroup",
+  "version": "0.1.0",
+  "author": "Matias Lapolla",
+  "license": "MIT",
+  "description": "Pick open windows from a gallery of live previews and put them in one scrolling group that floats over the workspace, with a frame to scroll, resize, minimize, ungroup or close it.",
+  "kinds": [
+    "service"
+  ],
+  "entryPoints": {
+    "service": "Service.qml"
+  }
+}

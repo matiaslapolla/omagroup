@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Stands in for hyprctl in test/cli.test.sh: logs each call to $FAKE_LOG and
+# answers the JSON queries from fixture files.
+printf '%s\n' "$*" >>"$FAKE_LOG"
+case "$1 ${2:-}" in
+  "clients -j") cat "$FAKE_CLIENTS" ;;
+  "monitors -j") cat "$FAKE_MONITORS" ;;
+  *) echo ok ;;
+esac

@@ -1,0 +1,310 @@
+#!/usr/bin/env bash
+# omagroup — put open windows in one scrolling group that floats over the
+# active workspace. A group is the special workspace special:omagroup-<id>
+# with the scrolling layout (docs/adr/0001).
+#
+#   omagroup                        open the gallery to pick windows
+#   omagroup create [--name N] ADDR...
+#   omagroup list                   groups with their members (JSON)
+#   omagroup windows                every window with location and process (JSON)
+#   omagroup show [ID]              show a group; no ID picks a hidden one
+#   omagroup hide [ID]              minimize; no ID is the group on the focused monitor
+#   omagroup ungroup [ID]           move members to the active workspace
+#   omagroup close [ID]             close members and end what stays alive
+#   omagroup prune                  delete groups without members
+#   omagroup scroll ID +col|-col
+#   omagroup resize ID +0.1|-0.1
+
+set -euo pipefail
+
+STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
+STATE_DIR="${OMAGROUP_STATE_DIR:-$STATE_HOME/omagroup}"
+STATE_FILE="$STATE_DIR/groups.json"
+# Omarchy requires every .lua file here on each config reload, so a group
+# keeps its layout across `hyprctl reload`.
+RULES_DIR="${OMAGROUP_RULES_DIR:-$STATE_HOME/omarchy/workspace-layouts}"
+CLOSE_WAIT="${OMAGROUP_CLOSE_WAIT:-3}"
+PREFIX="special:omagroup-"
+
+# The top gap holds the frame that Frame.qml draws; keep both in sync.
+GAP_TOP=72
+GAP_SIDE=48
+
+die() {
+  echo "omagroup: $*" >&2
+  exit 1
+}
+
+valid_address() { [[ $1 =~ ^0x[0-9a-f]+$ ]]; }
+valid_id() { [[ $1 =~ ^og[0-9]+$ ]]; }
+
+need_id() {
+  valid_id "$1" || die "invalid group id: $1"
+  group_exists "$1" || die "no group $1"
+}
+
+read_state() {
+  if [[ -s $STATE_FILE ]]; then cat "$STATE_FILE"; else echo '{"groups":[]}'; fi
+}
+
+write_state() {
+  mkdir -p "$STATE_DIR"
+  local tmp
+  tmp=$(mktemp "$STATE_DIR/.groups.XXXXXX")
+  cat >"$tmp"
+  mv "$tmp" "$STATE_FILE"
+}
+
+group_exists() { read_state | jq -e --arg id "$1" 'any(.groups[]; .id == $id)' >/dev/null; }
+
+group_name() { read_state | jq -r --arg id "$1" '.groups[] | select(.id == $id) | .name'; }
+
+rule_file() { echo "$RULES_DIR/omagroup-$1.lua"; }
+
+rule_lua() {
+  printf 'hl.workspace_rule({ workspace = "%s%s", layout = "scrolling", gaps_out = { top = %d, right = %d, bottom = %d, left = %d } })' \
+    "$PREFIX" "$1" "$GAP_TOP" "$GAP_SIDE" "$GAP_SIDE" "$GAP_SIDE"
+}
+
+# One hyprctl call for a list of Lua dispatches.
+dispatch_all() {
+  (($#)) || return 0
+  local batch="" cmd
+  for cmd in "$@"; do batch+="dispatch $cmd ; "; done
+  hyprctl --batch "${batch% ; }" >/dev/null
+}
+
+members() {
+  hyprctl clients -j | jq -r --arg ws "$PREFIX$1" '.[] | select(.workspace.name == $ws) | .address'
+}
+
+# The group shown on the focused monitor, or nothing.
+focused_group() {
+  hyprctl monitors -j | jq -r --arg p "$PREFIX" \
+    '.[] | select(.focused) | .specialWorkspace.name | select(startswith($p)) | ltrimstr($p)'
+}
+
+shown_groups() {
+  hyprctl monitors -j | jq -r --arg p "$PREFIX" \
+    '.[] | .specialWorkspace.name | select(startswith($p)) | ltrimstr($p)'
+}
+
+toggle() { dispatch_all "hl.dsp.workspace.toggle_special(\"omagroup-$1\")"; }
+
+delete_group() {
+  read_state | jq --arg id "$1" '.groups |= map(select(.id != $id))' | write_state
+  rm -f "$(rule_file "$1")"
+}
+
+next_id() {
+  read_state | jq -r '[.groups[].id | ltrimstr("og") | tonumber] | (max // 0) + 1 | "og\(.)"'
+}
+
+cmd_create() {
+  local name="" addresses=() address
+  while (($#)); do
+    case $1 in
+      --name)
+        (($# >= 2)) || die "--name needs a value"
+        name=$2
+        shift 2
+        ;;
+      *)
+        addresses+=("$1")
+        shift
+        ;;
+    esac
+  done
+  ((${#addresses[@]})) || die "create needs at least one window address"
+  for address in "${addresses[@]}"; do
+    valid_address "$address" || die "invalid window address: $address"
+  done
+
+  local live
+  live=$(hyprctl clients -j | jq -r '.[].address')
+  for address in "${addresses[@]}"; do
+    grep -qxF "$address" <<<"$live" || die "no window $address"
+  done
+
+  local id
+  id=$(next_id)
+  # Names are display text only; strip control characters and cap the length.
+  name=$(printf '%s' "$name" | tr -d '[:cntrl:]' | cut -c1-40)
+  [[ -n $name ]] || name="group ${id#og}"
+
+  # The rule must exist before the first window creates the workspace. The
+  # state comes last: a prune that runs during the moves cannot see the group.
+  mkdir -p "$RULES_DIR"
+  rule_lua "$id" >"$(rule_file "$id")"
+  hyprctl eval "$(rule_lua "$id")" >/dev/null
+
+  local moves=()
+  for address in "${addresses[@]}"; do
+    moves+=("hl.dsp.window.move({ workspace = \"$PREFIX$id\", window = \"address:$address\", follow = false })")
+  done
+  dispatch_all "${moves[@]}"
+
+  read_state | jq --arg id "$id" --arg name "$name" '.groups += [{ id: $id, name: $name }]' | write_state
+
+  [[ $(focused_group) == "$id" ]] || toggle "$id"
+  echo "$id"
+}
+
+cmd_list() {
+  local clients monitors
+  clients=$(hyprctl clients -j)
+  monitors=$(hyprctl monitors -j)
+  read_state | jq --argjson clients "$clients" --argjson monitors "$monitors" --arg p "$PREFIX" '
+    [.groups[] | . as $g | ($p + $g.id) as $ws | $g + {
+      workspace: $ws,
+      shown: ([$monitors[] | select(.specialWorkspace.name == $ws) | .name] | first),
+      members: [$clients[] | select(.workspace.name == $ws) | { address, class, title }]
+    }]'
+}
+
+cmd_windows() {
+  local clients monitors state processes
+  clients=$(hyprctl clients -j)
+  monitors=$(hyprctl monitors -j)
+  state=$(read_state)
+  local pids
+  pids=$(jq -r '[.[].pid | select(. > 0)] | map(tostring) | join(",")' <<<"$clients")
+  processes='{}'
+  if [[ -n $pids ]]; then
+    processes=$(ps -o pid=,comm= -p "$pids" 2>/dev/null |
+      jq -R -s 'split("\n") | map(capture("^\\s*(?<pid>[0-9]+)\\s+(?<comm>.+)$")) | map({ (.pid): .comm }) | add // {}')
+  fi
+  jq --argjson monitors "$monitors" --argjson state "$state" --argjson processes "$processes" --arg p "$PREFIX" '
+    ($monitors | map({ (.id | tostring): .name }) | add // {}) as $mon
+    | ($state.groups | map({ (.id): .name }) | add // {}) as $names
+    | [.[] | select(.mapped != false) | . as $c
+      | ($c.workspace.name // "") as $ws
+      | (if ($ws | startswith($p)) then ($ws | ltrimstr($p)) else null end) as $group
+      | {
+          address, class, title, pid,
+          process: ($processes[$c.pid | tostring] // $c.class),
+          workspaceId: $c.workspace.id,
+          workspace: $ws,
+          monitor: ($mon[$c.monitor | tostring] // ""),
+          group: $group,
+          location: (
+            if $group then "group " + ($names[$group] // $group)
+            elif $ws == "special:minimized" then "minimized"
+            elif ($ws | startswith("special:")) then ($ws | ltrimstr("special:"))
+            else "WS \($c.workspace.id) · \($mon[$c.monitor | tostring] // "?")"
+            end)
+        }]
+    | sort_by(.workspaceId < 0, (.workspaceId | if . < 0 then -. else . end), .address)' <<<"$clients"
+}
+
+cmd_show() {
+  local id=${1:-}
+  if [[ -z $id ]]; then
+    local hidden
+    hidden=$(cmd_list | jq -r '.[] | select(.shown == null) | "\(.id)\t\(.name)"')
+    [[ -n $hidden ]] || die "no hidden group"
+    if (($(wc -l <<<"$hidden") == 1)); then
+      id=$(cut -f1 <<<"$hidden")
+    else
+      local options=() choice
+      while IFS=$'\t' read -r gid gname; do options+=("$gid $gname"); done <<<"$hidden"
+      choice=$(omarchy menu select "Group" "${options[@]}") || exit 0
+      id=${choice%% *}
+    fi
+  fi
+  need_id "$id"
+  [[ $(focused_group) == "$id" ]] || toggle "$id"
+}
+
+cmd_hide() {
+  local id=${1:-$(focused_group)}
+  [[ -n $id ]] || die "no group is shown on the focused monitor"
+  need_id "$id"
+  shown_groups | grep -qxF "$id" && toggle "$id"
+  return 0
+}
+
+target_or_focused() {
+  local id=${1:-$(focused_group)}
+  [[ -n $id ]] || die "no group given and none shown on the focused monitor"
+  need_id "$id"
+  echo "$id"
+}
+
+cmd_ungroup() {
+  local id
+  id=$(target_or_focused "${1:-}")
+  local workspace
+  workspace=$(hyprctl monitors -j | jq -r '.[] | select(.focused) | .activeWorkspace.id')
+  [[ $workspace =~ ^[0-9]+$ ]] || die "no active workspace"
+
+  local moves=() address
+  while read -r address; do
+    [[ -n $address ]] && moves+=("hl.dsp.window.move({ workspace = \"$workspace\", window = \"address:$address\", follow = false })")
+  done < <(members "$id")
+  # Emptied, the special workspace hides itself.
+  dispatch_all "${moves[@]}"
+  delete_group "$id"
+}
+
+cmd_close() {
+  local id
+  id=$(target_or_focused "${1:-}")
+  local addresses=() address
+  mapfile -t addresses < <(members "$id")
+
+  local closes=()
+  for address in "${addresses[@]}"; do
+    [[ -n $address ]] && closes+=("hl.dsp.window.close({ window = \"address:$address\" })")
+  done
+  dispatch_all "${closes[@]}"
+  delete_group "$id"
+
+  ((${#addresses[@]})) || return 0
+  sleep "$CLOSE_WAIT"
+  # A window that ignored the close request is still listed: end its process.
+  local pid
+  for pid in $(hyprctl clients -j | jq -r --argjson a "$(printf '%s\n' "${addresses[@]}" | jq -R . | jq -s .)" \
+    '.[] | select(.address as $x | $a | index($x)) | .pid | select(. > 0)'); do
+    kill -TERM "$pid" 2>/dev/null || true
+  done
+}
+
+cmd_prune() {
+  local used id
+  used=$(hyprctl clients -j | jq -r --arg p "$PREFIX" '.[].workspace.name | select(startswith($p)) | ltrimstr($p)' | sort -u)
+  for id in $(read_state | jq -r '.groups[].id'); do
+    grep -qxF "$id" <<<"$used" || delete_group "$id"
+  done
+}
+
+cmd_scroll() {
+  (($# == 2)) || die "usage: omagroup scroll ID +col|-col"
+  need_id "$1"
+  [[ $2 == "+col" || $2 == "-col" ]] || die "scroll takes +col or -col"
+  dispatch_all "hl.dsp.layout(\"move $2\")"
+}
+
+cmd_resize() {
+  (($# == 2)) || die "usage: omagroup resize ID +0.1|-0.1"
+  need_id "$1"
+  [[ $2 =~ ^[+-]0\.[0-9]+$ ]] || die "resize takes a relative width such as +0.1"
+  dispatch_all "hl.dsp.layout(\"colresize $2\")"
+}
+
+cmd_pick() {
+  command -v omarchy-shell >/dev/null || die "omarchy-shell not found"
+  omarchy-shell omagroup pick >/dev/null
+}
+
+main() {
+  local command=${1:-pick}
+  (($#)) && shift
+  case $command in
+    pick | create | list | windows | show | hide | ungroup | close | prune | scroll | resize) "cmd_$command" "$@" ;;
+    -h | --help | help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//' ;;
+    *) die "unknown command: $command (see omagroup --help)" ;;
+  esac
+}
+
+main "$@"

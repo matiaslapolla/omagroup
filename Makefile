@@ -1,0 +1,17 @@
+QMLLINT ?= /usr/lib/qt6/bin/qmllint
+
+.PHONY: check validate lint test
+
+check: validate lint test
+
+validate:
+	omarchy plugin validate .
+
+# Syntax gate only: the shell's qs.* modules are not resolvable outside the
+# running shell, so qmllint's type warnings are noise here.
+lint:
+	$(QMLLINT) --import disable --unqualified disable --missing-property disable --missing-type disable --unresolved-type disable --inheritance-cycle disable --required disable --uncreatable-type disable --signal-handler-parameters disable *.qml
+	bash -n bin/omagroup test/cli.test.sh
+
+test:
+	bash test/cli.test.sh
